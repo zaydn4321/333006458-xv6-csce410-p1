@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "debug.h"
 
 struct cpu cpus[NCPU];
 
@@ -119,6 +120,7 @@ allocproc(void)
       release(&p->lock);
     }
   }
+  dprintf(DBG_PROC, DBG_ERR, "no free proc slot");
   return 0;
 
 found:
@@ -127,6 +129,7 @@ found:
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
+    dprintf(DBG_PROC, DBG_ERR, "pid %d: trapframe alloc failed", p->pid);
     freeproc(p);
     release(&p->lock);
     return 0;
@@ -135,10 +138,14 @@ found:
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if (p->pagetable == 0) {
+    dprintf(DBG_PROC, DBG_ERR, "pid %d: pagetable alloc failed", p->pid);
     freeproc(p);
     release(&p->lock);
     return 0;
   }
+
+  dprintf(DBG_PROC, DBG_TRACE, "allocated pid %d in slot %d", p->pid,
+          (int)(p - proc));
 
   // Set up new context to start executing at forkret,
   // which returns to user space.
@@ -155,6 +162,10 @@ found:
 static void
 freeproc(struct proc *p)
 {
+  // before the teardown clears p->pid below
+  dprintf(DBG_PROC, DBG_TRACE, "freeing pid %d (%s), slot %d", p->pid, p->name,
+          (int)(p - proc));
+
   if (p->trapframe)
     kfree((void *)p->trapframe);
   p->trapframe = 0;
@@ -227,6 +238,8 @@ userinit(void)
 
   p->state = RUNNABLE;
 
+  dprintf(DBG_PROC, DBG_INFO, "first user process created, pid %d", p->pid);
+
   release(&p->lock);
 }
 
@@ -264,11 +277,14 @@ kfork(void)
 
   // Allocate process.
   if ((np = allocproc()) == 0) {
+    dprintf(DBG_PROC, DBG_ERR, "pid %d: allocproc failed", p->pid);
     return -1;
   }
 
   // Copy user memory from parent to child.
   if (uvmcopy(p->pagetable, np->pagetable, p->sz) < 0) {
+    dprintf(DBG_PROC, DBG_ERR, "pid %d: uvmcopy of %lu bytes failed", p->pid,
+            p->sz);
     freeproc(np);
     release(&np->lock);
     return -1;
@@ -301,22 +317,29 @@ kfork(void)
   np->state = RUNNABLE;
   release(&np->lock);
 
+  dprintf(DBG_PROC, DBG_INFO, "parent %d forked child %d, copied %lu bytes",
+          p->pid, pid, p->sz);
+
   return pid;
 }
 
 // Pass p's abandoned children to init.
 // Caller must hold wait_lock.
-void
+// Returns how many were moved, for the exit message.
+int
 reparent(struct proc *p)
 {
   struct proc *pp;
+  int n = 0;
 
   for (pp = proc; pp < &proc[NPROC]; pp++) {
     if (pp->parent == p) {
       pp->parent = initproc;
       wakeup(initproc);
+      n++;
     }
   }
+  return n;
 }
 
 // Exit the current process.  Does not return.
@@ -347,7 +370,10 @@ kexit(int status)
   acquire(&wait_lock);
 
   // Give any children to init.
-  reparent(p);
+  int nkids = reparent(p);
+
+  dprintf(DBG_PROC, DBG_INFO, "pid %d exiting, status %d, %d reparented",
+          p->pid, status, nkids);
 
   // Parent might be sleeping in wait().
   wakeup(p->parent);
@@ -394,6 +420,9 @@ kwait(uint64 addr)
             release(&wait_lock);
             return -1;
           }
+          dprintf(DBG_PROC, DBG_INFO, "parent %d reaped child %d, status %d",
+                  p->pid, pid, pp->xstate);
+
           pp->parent = 0;
           freeproc(pp);
           release(&pp->lock);
@@ -450,6 +479,11 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        // p->pid, not myproc(), which isnt set up yet here
+        dprintf(DBG_SCHED, DBG_TRACE, "cpu %d switching to pid %d (%s)",
+                cpuid(), p->pid, p->name);
+
         swtch(&c->context, &p->context);
 
         // Don't re-enable interrupts on release.
@@ -612,10 +646,13 @@ kkill(int pid)
         p->state = RUNNABLE;
       }
       release(&p->lock);
+      dprintf(DBG_PROC, DBG_INFO, "pid %d killed pid %d", dbg_curpid(), pid);
       return 0;
     }
     release(&p->lock);
   }
+  dprintf(DBG_PROC, DBG_WARN, "pid %d tried to kill %d, not found",
+          dbg_curpid(), pid);
   return -1;
 }
 
