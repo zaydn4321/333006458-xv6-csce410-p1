@@ -28,3 +28,36 @@ dbg_curpid(void)
 
   return p ? p->pid : -1;
 }
+
+// returns the old value, or -1 on a bad op/level
+uint64
+sys_debugctl(void)
+{
+  int op;
+  uint64 arg, old;
+
+  argint(0, &op);
+  argaddr(1, &arg);
+
+  switch (op) {
+  case DBGCTL_GETMASK:
+    return __atomic_load_n(&dbg_mask, __ATOMIC_RELAXED);
+
+  case DBGCTL_SETMASK:
+    old = __atomic_load_n(&dbg_mask, __ATOMIC_RELAXED);
+    __atomic_store_n(&dbg_mask, arg, __ATOMIC_RELAXED);
+    return old;
+
+  case DBGCTL_GETLEVEL:
+    return __atomic_load_n(&dbg_level, __ATOMIC_RELAXED);
+
+  case DBGCTL_SETLEVEL:
+    if (arg > DBG_LEVEL_MAX) // arg is unsigned, so this catches negatives too
+      return -1;
+    old = __atomic_load_n(&dbg_level, __ATOMIC_RELAXED);
+    __atomic_store_n(&dbg_level, (int)arg, __ATOMIC_RELAXED);
+    return old;
+  }
+
+  return -1;
+}
