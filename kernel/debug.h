@@ -3,13 +3,13 @@
 
 // kernel logging. user/dbg.c includes this too.
 
-#define DBG_PROC    (1UL << 0)  /* process lifecycle             */
-#define DBG_SCHED   (1UL << 1)  /* context switching             */
-#define DBG_SYSCALL (1UL << 2)  /* system call entry/exit        */
-#define DBG_TRAP    (1UL << 3)  /* traps, interrupts, page faults*/
-#define DBG_VM      (1UL << 4)  /* virtual memory                */
-#define DBG_FS      (1UL << 5)  /* file system                   */
-#define DBG_DEV     (1UL << 6)  /* drivers                       */
+#define DBG_PROC    (1UL << 0) /* process lifecycle             */
+#define DBG_SCHED   (1UL << 1) /* context switching             */
+#define DBG_SYSCALL (1UL << 2) /* system call entry/exit        */
+#define DBG_TRAP    (1UL << 3) /* traps, interrupts, page faults*/
+#define DBG_VM      (1UL << 4) /* virtual memory                */
+#define DBG_FS      (1UL << 5) /* file system                   */
+#define DBG_DEV     (1UL << 6) /* drivers                       */
 #define DBG_ALL     (~0UL)
 
 #define DBG_ERR   1
@@ -27,12 +27,13 @@
 
 struct dbgcat {
   uint64 bit;
-  char  *name;  // what you type
-  char  *label; // what prints. padded, printk cant do %-7s
+  char *name;  // what you type
+  char *label; // what prints. padded, printk cant do %-7s
 };
 
 // unused attr keeps -Werror quiet
 static const struct dbgcat dbg_cats[] __attribute__((unused)) = {
+  // clang-format off
   { DBG_PROC,    "proc",    "proc   " },
   { DBG_SCHED,   "sched",   "sched  " },
   { DBG_SYSCALL, "syscall", "syscall" },
@@ -40,6 +41,7 @@ static const struct dbgcat dbg_cats[] __attribute__((unused)) = {
   { DBG_VM,      "vm",      "vm     " },
   { DBG_FS,      "fs",      "fs     " },
   { DBG_DEV,     "dev",     "dev    " },
+  // clang-format on
 };
 
 #define DBG_NCATS ((int)(sizeof(dbg_cats) / sizeof(dbg_cats[0])))
@@ -51,10 +53,10 @@ static const char *dbg_levelnames[] __attribute__((unused)) = {
 #define DBG_NLEVELS ((int)(sizeof(dbg_levelnames) / sizeof(dbg_levelnames[0])))
 
 extern uint64 dbg_mask;
-extern int    dbg_level;
+extern int dbg_level;
 
 char *dbg_catname(uint64 cat);
-int   dbg_curpid(void);
+int dbg_curpid(void);
 
 // macro so the args only run when it prints
 #ifndef DBG_DISABLE
@@ -66,20 +68,20 @@ dbg_test(uint64 cat, int level)
          level <= __atomic_load_n(&dbg_level, __ATOMIC_RELAXED);
 }
 
-#define dprintf(cat, level, fmt, ...)                                        \
-  do {                                                                       \
-    if (dbg_test((cat), (level)))                                            \
-      printk("[%s][%d][%s] " fmt "\n", dbg_catname(cat), dbg_curpid(),       \
-             __func__, ##__VA_ARGS__);                                       \
+#define dprintf(cat, level, fmt, ...)                                          \
+  do {                                                                         \
+    if (dbg_test((cat), (level)))                                              \
+      printk("[%s][%d][%s] " fmt "\n", dbg_catname(cat), dbg_curpid(),         \
+             __func__, ##__VA_ARGS__);                                         \
   } while (0)
 
 #else
 
 // make DBG=0. if(0) not empty, so logged vars dont come out unused
-#define dprintf(cat, level, fmt, ...)                                        \
-  do {                                                                       \
-    if (0)                                                                   \
-      printk(fmt, ##__VA_ARGS__);                                            \
+#define dprintf(cat, level, fmt, ...)                                          \
+  do {                                                                         \
+    if (0)                                                                     \
+      printk(fmt, ##__VA_ARGS__);                                              \
   } while (0)
 
 #endif
