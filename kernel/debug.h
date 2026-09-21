@@ -24,6 +24,8 @@
 #define DBGCTL_SETMASK  1
 #define DBGCTL_GETLEVEL 2
 #define DBGCTL_SETLEVEL 3
+#define DBGCTL_GETPID   4
+#define DBGCTL_SETPID   5
 
 struct dbgcat {
   uint64 bit;
@@ -54,6 +56,7 @@ static const char *dbg_levelnames[] __attribute__((unused)) = {
 
 extern uint64 dbg_mask;
 extern int dbg_level;
+extern int dbg_pid; // 0 = no filter
 
 char *dbg_catname(uint64 cat);
 int dbg_curpid(void);
@@ -64,8 +67,15 @@ int dbg_curpid(void);
 static inline int
 dbg_test(uint64 cat, int level)
 {
-  return (__atomic_load_n(&dbg_mask, __ATOMIC_RELAXED) & (cat)) != 0 &&
-         level <= __atomic_load_n(&dbg_level, __ATOMIC_RELAXED);
+  int pid;
+
+  if ((__atomic_load_n(&dbg_mask, __ATOMIC_RELAXED) & (cat)) == 0 ||
+      level > __atomic_load_n(&dbg_level, __ATOMIC_RELAXED))
+    return 0;
+
+  // pid check last, only costs anything once mask and level pass
+  pid = __atomic_load_n(&dbg_pid, __ATOMIC_RELAXED);
+  return pid == 0 || pid == dbg_curpid();
 }
 
 #define dprintf(cat, level, fmt, ...)                                          \

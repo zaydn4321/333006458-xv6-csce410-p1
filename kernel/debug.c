@@ -10,6 +10,7 @@
 // no lock, reads cant tear
 uint64 dbg_mask = 0;
 int dbg_level = DBG_INFO;
+int dbg_pid = 0;
 
 char *
 dbg_catname(uint64 cat)
@@ -56,6 +57,16 @@ sys_debugctl(void)
       return -1;
     old = __atomic_load_n(&dbg_level, __ATOMIC_RELAXED);
     __atomic_store_n(&dbg_level, (int)arg, __ATOMIC_RELAXED);
+    return old;
+
+  case DBGCTL_GETPID:
+    return __atomic_load_n(&dbg_pid, __ATOMIC_RELAXED);
+
+  case DBGCTL_SETPID:
+    if (arg > 0x7fffffff) // has to fit in an int pid
+      return -1;
+    old = __atomic_load_n(&dbg_pid, __ATOMIC_RELAXED);
+    __atomic_store_n(&dbg_pid, (int)arg, __ATOMIC_RELAXED);
     return old;
   }
 

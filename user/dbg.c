@@ -12,6 +12,7 @@ usage(void)
   printf("  dbg off <cat>...    disable categories\n");
   printf("  dbg only <cat>...   enable exactly these\n");
   printf("  dbg level <lvl>     set detail level\n");
+  printf("  dbg pid <n>|off     only log from one process\n");
 
   printf("categories:");
   for (int i = 0; i < DBG_NCATS; i++)
@@ -64,6 +65,24 @@ show(void)
   if (level >= 0 && level < DBG_NLEVELS)
     printf(" (%s)", dbg_levelnames[level]);
   printf("\n");
+
+  int pid = debugctl(DBGCTL_GETPID, 0);
+  if (pid == 0)
+    printf("pid   any\n");
+  else
+    printf("pid   %d only\n", pid);
+}
+
+// -1 unless s is all digits
+static int
+number(char *s)
+{
+  if (*s == 0)
+    return -1;
+  for (char *c = s; *c; c++)
+    if (*c < '0' || *c > '9')
+      return -1;
+  return atoi(s);
 }
 
 // or together the bits named in argv[2..argc), 0 if any name is bad
@@ -110,6 +129,21 @@ main(int argc, char *argv[])
       exit(1);
     }
     debugctl(DBGCTL_SETLEVEL, level);
+    show();
+    exit(0);
+  }
+
+  if (strcmp(argv[1], "pid") == 0) {
+    if (argc != 3) {
+      usage();
+      exit(1);
+    }
+    int pid = strcmp(argv[2], "off") == 0 ? 0 : number(argv[2]);
+    if (pid < 0) {
+      printf("dbg: bad pid %s\n", argv[2]);
+      exit(1);
+    }
+    debugctl(DBGCTL_SETPID, pid);
     show();
     exit(0);
   }
