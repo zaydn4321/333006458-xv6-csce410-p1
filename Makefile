@@ -6,6 +6,7 @@ OBJS = \
   $K/start.o \
   $K/console.o \
   $K/printk.o \
+  $K/debug.o \
   $K/uart.o \
   $K/kalloc.o \
   $K/spinlock.o \
@@ -65,6 +66,11 @@ DETFLAGS = -ffile-prefix-map=$(CURDIR)=.
 
 CFLAGS = -Wall -Werror -Wno-unknown-attributes -O -fno-omit-frame-pointer -ggdb -gdwarf-2
 CFLAGS += $(DETFLAGS)
+
+
+ifeq ($(DBG),0)
+CFLAGS += -DDBG_DISABLE
+endif
 CFLAGS += -march=rv64gc
 CFLAGS += -std=gnu99
 CFLAGS += -MD
