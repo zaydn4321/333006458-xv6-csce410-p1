@@ -30,126 +30,64 @@ About 20 to 25 hours. The design wouldn't change, but I would have spent much lo
 
 New files:
 
-| File | What it has |
-|---|---|
-| `kernel/debug.h` | Categories, levels, debugctl op codes, the name tables, and the `dprintf` macro. The kernel and `user/dbg.c` both include it. |
-| `kernel/debug.c` | `dbg_mask`, `dbg_level`, `dbg_pid`, the prefix helpers, and `sys_debugctl`. |
-| `user/dbg.c` | The `dbg` user program. |
+- `kernel/debug.h` - categories, levels, debugctl ops, the name table, and the dprintf macro
+- `kernel/debug.c` - the mask, level and pid variables, and sys_debugctl
+- `user/dbg.c` - the dbg program
 
 Modified files:
 
-| File | Change |
-|---|---|
-| `Makefile` | Added `debug.o` to `OBJS` and `_dbg` to `UPROGS`. Added a `DBG=0` build option. |
-| `kernel/syscall.h` | Added `SYS_debugctl 23`. |
-| `kernel/syscall.c` | Added the extern and the table entry for `sys_debugctl`. |
-| `user/usys.pl` | Added `entry("debugctl")`. |
-| `user/user.h` | Added `uint64 debugctl(int, uint64);` |
-| `kernel/proc.c` | Added messages in allocproc, freeproc, userinit, kfork, kexit, kwait, kkill and scheduler. `reparent()` now returns the number of children it moved. |
-| `kernel/exec.c` | Added messages in kexec for success and failure. |
-
-The transcripts are in `transcripts/`. See section 4.
+- `Makefile` - added debug.o, _dbg, and the `DBG=0` option
+- `kernel/syscall.h`, `kernel/syscall.c` - added the debugctl syscall (number 23)
+- `user/usys.pl`, `user/user.h` - user side of debugctl
+- `kernel/proc.c` - log messages in allocproc, freeproc, userinit, kfork, kexit, kwait, kkill and scheduler. reparent() now returns how many children it moved.
+- `kernel/exec.c` - log messages in kexec
 
 ## 4. Transcripts (console output) included
 
-All the files are in `transcripts/`. Each file is one full session from boot to shutdown. It has every command typed at the xv6 prompt and the output. Each session starts with a new `fs.img`.
+All in `transcripts/`. Each file is a full xv6 session with the commands and output.
 
-| File | What it shows |
-|---|---|
-| `1_boot_silent.txt` | Scenario 1. The mask is 0 at boot. `dbg` shows mask 0. `echo hi` and `ls` print no debug output. |
-| `2_proc_ls_echo.txt` | Scenario 2. `dbg on proc`, then `ls` and `echo hi`. Each command shows kfork, kexec, kexit and kwait. The parent is the shell (pid 2) and the child pids match. |
-| `3_forktest.txt` | Scenario 3. `dbg on proc` at level trace, then `forktest`. It shows allocproc and freeproc for every process, plus fork, exit and wait. |
-| `3_forktest_check.txt` | A check of `3_forktest.txt` using grep and comm. The commands are in the file. Every forked pid exited, was reaped, and was freed once. There are no leaks and no double frees. The file also explains why the counts are off by one or two. |
-| `4_off_all.txt` | Scenario 4. `ls`, `echo hi` and `forktest` with proc on give 4, 4 and 189 debug lines. After `dbg off all`, the same three commands give 0. |
-| `5_sched.txt` | Scenario 5. `dbg on sched` by itself prints nothing. The sched message is at trace and the default level is info. After `dbg level trace`, `echo hi` gives 3 sched lines and `forktest` gives 106. |
-| `6_usertests.txt` | Scenario 6. `usertests` with the mask at 0. ALL TESTS PASSED and there are no debug lines. The `usertrap(): unexpected scause` lines come from tests that fault on purpose. |
-| `7_bonus_pid_filter.txt` | The bonus. See section 7. |
-| `8_extra_errors_levels.txt` | Extra tests. Killing a pid that doesn't exist (WARN). Running a program that doesn't exist (ERR). The level set to warn and then err. Bad input to `dbg`. |
-
-`transcripts/README.txt` has the same list.
+- `1_boot_silent.txt` - scenario 1. Boot with mask 0, no debug output.
+- `2_proc_ls_echo.txt` - scenario 2. dbg on proc, then ls and echo hi. Shows fork, exec, exit and wait with matching pids.
+- `3_forktest.txt` - scenario 3. forktest at level trace.
+- `3_forktest_check.txt` - checks that every pid in forktest exited and was freed once. No leaks or double frees.
+- `4_off_all.txt` - scenario 4. ls, echo hi and forktest with logging on, then dbg off all and the same commands with no output.
+- `5_sched.txt` - scenario 5. dbg on sched and what it prints.
+- `6_usertests.txt` - scenario 6. usertests passes with mask 0.
+- `7_bonus_pid_filter.txt` - the bonus.
+- `8_extra_errors_levels.txt` - extra tests: kill of a missing pid, exec of a missing program, different levels, and bad dbg input.
 
 ## 5. Design comments
 
-I used the approach from parts A to D. These notes cover the parts that aren't obvious from the handout.
+I followed the design from parts A to D.
 
-### Part A: dprintf
+**dprintf.** A message prints if its category is on in the mask, its level is at or below the current level, and (for the bonus) the pid filter matches. Each message starts with the category, pid and function name, like `[proc   ][2][kfork] ...`, so `grep '\[proc'` finds all the process messages. The pid is -1 when there is no current process, like in userinit(). The names are padded by hand because printk doesn't support `%-7s`.
 
-A message prints only if three things are true. Its category bit is set in `dbg_mask`. Its level is at or below `dbg_level`. For the bonus, the pid filter also has to match. Every message starts with the category, the current pid and the function name:
+It is a macro so the arguments only get evaluated when it prints, and so `__func__` is the caller's name. `make DBG=0` turns it into `if (0) printk(...)`, which the compiler removes. I used `if (0)` instead of nothing so variables that are only logged don't cause unused variable errors with `-Werror`. I checked that the DBG=0 kernel builds with no warnings and that the log strings are not in the binary.
 
-```
-[proc   ][2][kfork] parent 2 forked child 5, copied 20480 bytes
-```
+The category names are in one table in debug.h. The kernel and dbg both use it, so a new category only has to be added once.
 
-The category names are padded by hand in the table. Kernel `printk` doesn't support width like `%-7s`. `grep '\[proc' log.txt` gives only the process messages. The pid is -1 when no process is running on that CPU. This happens in `userinit()`, which runs from `main()` before the scheduler starts.
+**debugctl.** I used the suggested interface, one syscall with GET/SET ops for the mask and level. SET returns the old value and a bad op or level returns -1. One problem is that -1 is the same as DBG_ALL, so an error and "all categories on" look the same.
 
-`dprintf` is a macro, not a function. It puts `printk` inside an `if`. So the arguments are only evaluated when the message prints. It also lets `__func__` give the caller's name.
+**dbg.** Supports dbg, on, off, only, level and all like the handout. Bad input prints an error and doesn't call the kernel.
 
-Compiling it out: `make DBG=0` defines `DBG_DISABLE`. Then `dprintf` becomes `if (0) printk(...)`. I didn't use an empty statement. With an empty statement, a variable that is only used in a log message would be unused. That is a warning, and `-Wall -Werror` would stop the build. With `if (0)` the compiler still sees the arguments, and `-O` removes the call. I checked this three ways:
+**Levels.** ERR is for allocation and exec failures. WARN is for killing a pid that doesn't exist. INFO is for fork, exec, exit, wait and kill. TRACE is for allocproc, freeproc and the scheduler message.
 
-- I disassembled one `dprintf` call. With logging on, it loads `dbg_mask`, does an `andi`, and branches. The arguments and the `printk` call are only on the taken branch. With `DBG=0`, the function is just `ret`.
-- The whole kernel builds with `make DBG=0` with no warnings. Kernel text goes from 36,136 to 31,096 bytes.
-- `strings kernel/kernel | grep -c 'reaped child'` gives 1 in the normal build and 0 with `DBG=0`. The messages are gone from the binary.
+**Making the sched message usable.** In `5_sched.txt`, dbg on sched alone prints nothing because the message is at TRACE. At trace level, one forktest printed 106 sched lines for 2 lines of real output, one for every context switch. To make it usable I would use it with the pid filter, count switches and print a summary instead of every switch, or save the events in a buffer and print them later.
 
-Name table: `dbg_cats[]` in `debug.h` has each bit, the name the user types, and the padded name the kernel prints. The kernel uses it for the prefix. `dbg` uses it to read names and to print its usage. So a new category only needs to be added in one place. The tables are `static` in a header, so they have `__attribute__((unused))`. Without it, every file that includes `debug.h` and doesn't use them would fail with `-Werror`.
-
-### Part B: debugctl
-
-I kept the suggested interface. It is one system call, `uint64 debugctl(int op, uint64 arg)`, with GETMASK, SETMASK, GETLEVEL and SETLEVEL. The SET ops return the old value. A bad op or a level out of range returns -1. Because it is one syscall with op codes, the bonus only needed two new op codes and no new syscall. The level check is `arg > DBG_LEVEL_MAX`. `arg` is unsigned, so this also rejects negative numbers.
-
-There is one problem with this interface. -1 as a `uint64` is `0xffffffffffffffff`, which is also `DBG_ALL`. So GETMASK with every category on looks the same as an error. I kept the interface from the handout. A separate error value or a pointer argument would fix it.
-
-### Part C: dbg
-
-`dbg`, `dbg on`, `dbg off`, `dbg only`, `dbg level` and `dbg off all` work like the handout shows. `on`, `off` and `only` read the current mask, change it with `|=`, `&= ~` or `=`, and write it back. `all` is `DBG_ALL`. Bad input gets an error message and exit status 1. That includes an unknown category or level, a missing argument, and an unknown command. The kernel checks the values again.
-
-### Part D: levels
-
-| Level | Messages |
-|---|---|
-| ERR | allocproc failures (no free slot, trapframe or pagetable), kfork failures, exec of a missing file, exec failure |
-| WARN | kill of a pid that doesn't exist |
-| INFO | userinit, fork (parent, child, size), exec (path, argc, size), exit (pid, status, children reparented), wait (parent, child, status), kill (killer, target) |
-| TRACE | allocproc success (pid, slot), freeproc (pid, name, slot), the scheduler message |
-
-At INFO you see what the system is doing. You see who forked who, what ran, who exited and who reaped it. TRACE adds the slot allocations and frees. That is only needed when looking for a leak. `8_extra_errors_levels.txt` shows the levels working at warn and err.
-
-Other details:
-
-- `freeproc()` prints before it clears `p->pid`.
-- `reparent()` didn't return anything before. Now it returns how many children it moved, and `kexit` prints that. It is only called in `proc.c`.
-- The allocproc success message prints while `p->lock` is held. This is allowed because the console lock is a leaf and `printk` doesn't sleep. `usertests` passes with the messages in.
-- The scheduler message is after `c->proc = p`. It prints `p->pid` from the loop variable.
-
-### Making the scheduler message usable (scenario 5)
-
-`5_sched.txt` shows the problem. One `forktest` run gave 106 sched lines and only 2 lines of real output. There is one line for every context switch, across 3 CPUs and about 60 processes. When the system is idle it's quiet. xv6 puts idle CPUs in `wfi`, so the amount of output depends on the work being done. With more processes, or a long program that gets preempted every timer tick, it would never stop. To make it usable I would:
-
-1. Use it with the pid filter from the bonus. Then you only see the switches for one process.
-2. Count switches per CPU and per process instead of printing each one. Print a summary when asked, for example with a new debugctl op. Printing to the UART inside the scheduler is slow and changes the timing you are trying to look at.
-3. Only print every Nth switch, or a few lines per timer tick.
-4. Save the events in a ring buffer in memory and print them later.
-
-### Other notes
-
-- The repo's GitHub workflow runs `make fmt` and fails if clang-format changes anything. The new code passes clang-format. The category table is inside `// clang-format off` and `// clang-format on`, the same as the table in `syscall.c`.
-- The linker prints `LOAD segment with RWX permissions` for `kernel/kernel` and `user/_forktest`. The original tree prints both of these too with this version of binutils. I checked before making any changes. There are no compiler warnings. A fresh clone of the repo builds with no compiler warnings, both normally and with `make DBG=0`.
+**Build.** The new code passes clang-format, which the repo's GitHub workflow checks. The RWX linker warnings were already there in the original tree.
 
 ## 6. Concurrency
 
-`dbg_mask`, `dbg_level` and `dbg_pid` are read on every `dprintf`. They are only written when someone runs `dbg`. I did not use a lock.
+I didn't use a lock. The mask, level and pid are each one aligned variable, so a read or write is a single instruction and can't see half of an update. I used relaxed `__atomic` loads and stores so the compiler doesn't cache old values. The worst case is a message printed or skipped right when the setting changes, which is fine for logging. A lock would slow down every CPU for a value that almost never changes, and printk already takes its own lock.
 
-Why it is correct: each variable is aligned and fits in a register. On RV64 a read is one `ld` or `lw`, and a write is one `sd` or `sw`. A reader gets the old value or the new value, never half of each. All reads and writes use `__atomic_load_n` and `__atomic_store_n` with `__ATOMIC_RELAXED`. This makes each access atomic and stops the compiler from keeping an old value in a register. It doesn't add any fences. The only race is that a message printed right when the setting changes might or might not show up. That doesn't matter for logging. `dbg_test` reads `dbg_pid` once, so it compares against one value.
-
-Why not a lock: the check runs on hot paths on every CPU. A lock would make all the CPUs wait on a value that almost never changes. `printk` also takes `pr.lock`, so another lock here would add a lock order to worry about for no reason.
-
-Limitations: the SET ops read the old value and then write the new one. These are two separate steps. So two SET calls at the same time could both return the same old value. `__atomic_exchange_n` would fix this. Also, `dbg on` and `dbg off` read the mask, change it, and write it back from user space. Two `dbg` commands at the exact same time could lose one change. `dbg` is run by hand, so I accepted both. Kernel ops that set or clear bits with `__atomic_fetch_or` and `__atomic_fetch_and` would fix the second one.
+One small issue is that two dbg commands at the exact same time could lose an update, since dbg reads the mask and writes it back. That's fine since dbg is run by hand.
 
 ## 7. Bonus points
 
-**a. Did you submit the Bonus "Start Strong" survey by the deadline?** Yes.
+**a.** Yes, I submitted the survey.
 
-**b. Did you attempt the extra functionality for bonus points?** Yes. Filter by pid.
+**b.** Yes, filter by pid.
 
-**i. Description.** There are two new debugctl ops, `DBGCTL_GETPID` (4) and `DBGCTL_SETPID` (5). They control a new variable, `dbg_pid`. 0 means no filter. SETPID rejects values that don't fit in an int. `dbg_test` checks the pid last, after the mask and level. So messages that are already off don't cost anything extra. The `dbg` tool has `dbg pid <n>` and `dbg pid off`, and plain `dbg` shows the current filter. The filter matches the process that is running when the message prints. It does not match pids named in the message. For example, "parent 2 reaped child 5" runs in pid 2. It shows with `dbg pid 2` but not with `dbg pid 5`.
+**i.** I added `DBGCTL_GETPID` and `DBGCTL_SETPID` and a `dbg_pid` variable, where 0 means no filter. A message only prints if it comes from that pid. The dbg program has `dbg pid <n>` and `dbg pid off`. The filter uses the process that is running, so "parent 2 reaped child 5" shows under pid 2, not pid 5.
 
-**ii. Console output.** `transcripts/7_bonus_pid_filter.txt`. With `dbg pid 2`, `echo hi` only shows the shell's kfork and kwait. The child's kexec and kexit are hidden. After `dbg pid off`, all four show again. `dbg pid abc` and `dbg pid` with nothing after it are rejected.
+**ii.** `transcripts/7_bonus_pid_filter.txt`. With dbg pid 2, echo hi only shows the shell's fork and wait. After dbg pid off, all of the messages show again.
